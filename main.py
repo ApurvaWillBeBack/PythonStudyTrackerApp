@@ -1,7 +1,7 @@
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import List, TypedDict
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -22,6 +22,15 @@ from PyQt6.QtWidgets import (
 )
 
 
+class StudySession(TypedDict):
+    """Data shape used for one saved study session."""
+
+    name: str
+    subject: str
+    topic: str
+    minutes: int
+
+
 class StudyTrackerApp(QMainWindow):
     """Main window for the Study Session Tracker application."""
 
@@ -32,7 +41,7 @@ class StudyTrackerApp(QMainWindow):
 
         # Store session data and where it will be persisted on disk.
         self.sessions_file = Path("sessions.json")
-        self.sessions: List[Dict[str, str | int]] = []
+        self.sessions: List[StudySession] = []
 
         self._build_ui()
         self._apply_styles()
@@ -191,13 +200,21 @@ class StudyTrackerApp(QMainWindow):
     def load_sessions(self) -> None:
         """Load study sessions from sessions.json when the app starts."""
         if not self.sessions_file.exists():
+            # Create the file once so beginners can see where data is saved.
+            self.save_sessions_to_file()
             return
 
         try:
             with self.sessions_file.open("r", encoding="utf-8") as file:
                 data = json.load(file)
                 if isinstance(data, list):
-                    self.sessions = data
+                    self.sessions = []
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        normalized = self._normalize_session(item)
+                        if normalized:
+                            self.sessions.append(normalized)
         except (json.JSONDecodeError, OSError):
             QMessageBox.warning(
                 self,
@@ -208,8 +225,15 @@ class StudyTrackerApp(QMainWindow):
 
     def save_sessions_to_file(self) -> None:
         """Persist all sessions to sessions.json."""
-        with self.sessions_file.open("w", encoding="utf-8") as file:
-            json.dump(self.sessions, file, indent=2)
+        try:
+            with self.sessions_file.open("w", encoding="utf-8") as file:
+                json.dump(self.sessions, file, indent=2)
+        except OSError:
+            QMessageBox.critical(
+                self,
+                "Save Error",
+                "Unable to save sessions.json. Please check file permissions.",
+            )
 
     def save_session(self) -> None:
         """Collect form input, save the session, and refresh the history list."""
@@ -226,7 +250,7 @@ class StudyTrackerApp(QMainWindow):
             )
             return
 
-        session = {
+        session: StudySession = {
             "name": name,
             "subject": subject,
             "topic": topic,
@@ -261,7 +285,7 @@ class StudyTrackerApp(QMainWindow):
         for session in self.sessions:
             self.history_layout.addWidget(self._make_history_card(session))
 
-    def _make_history_card(self, session: Dict[str, str | int]) -> QFrame:
+    def _make_history_card(self, session: StudySession) -> QFrame:
         """Create one styled row/card representing a study session."""
         card = QFrame()
         card.setStyleSheet(
@@ -293,6 +317,27 @@ class StudyTrackerApp(QMainWindow):
         layout.addWidget(minutes, stretch=0)
 
         return card
+
+    def _normalize_session(self, raw_session: dict) -> StudySession | None:
+        """Safely validate data loaded from JSON before using it in the UI."""
+        name = str(raw_session.get("name", "")).strip()
+        subject = str(raw_session.get("subject", "")).strip()
+        topic = str(raw_session.get("topic", "")).strip()
+
+        try:
+            minutes = int(raw_session.get("minutes", 0))
+        except (TypeError, ValueError):
+            return None
+
+        if not name or not subject or not topic or minutes < 1:
+            return None
+
+        return {
+            "name": name,
+            "subject": subject,
+            "topic": topic,
+            "minutes": minutes,
+        }
 
 
 def main() -> None:
